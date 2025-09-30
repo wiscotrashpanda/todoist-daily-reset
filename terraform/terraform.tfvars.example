@@ -1,0 +1,23 @@
+# Example terraform.tfvars file
+# Copy this to terraform.tfvars and update with your values
+
+aws_region = "us-east-1"
+environment = "prod"
+
+# Get your Todoist API token from: https://todoist.com/prefs/integrations
+todoist_api_token = "your-todoist-api-token-here"
+
+# Set your timezone (see: https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+timezone = "America/New_York"
+
+# Schedule when to run the function (cron format)
+# Default: daily at 1 AM UTC
+# Examples:
+#   "cron(0 1 * * ? *)"     # Daily at 1 AM UTC
+#   "cron(0 6 * * ? *)"     # Daily at 6 AM UTC
+#   "cron(0 22 * * ? *)"    # Daily at 10 PM UTC
+schedule_expression = "cron(0 1 * * ? *)"
+
+# Lambda configuration
+lambda_timeout = 300
+lambda_memory_size = 128
