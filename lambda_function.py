@@ -115,16 +115,11 @@ def is_recurring_task_due_today(task: Any, today: date, user_timezone: pytz.Base
     # Parse the due date
     try:
         if task.due.date:
-            print("task.due.date", task.due.date)
             # Date-only due date
             due_date = parser.parse(str(task.due.date)).date()
-            print(due_date)
         elif task.due.datetime:
             # DateTime due date - convert to user's timezone
-            print("task.due.datetime", task.due.datetime)
             due_datetime = parser.parse(str(task.due.datetime))
-            print(due_datetime)
-
             if due_datetime.tzinfo is None:
                 # Assume it's in user's timezone if no timezone info
                 due_datetime = user_timezone.localize(due_datetime)
