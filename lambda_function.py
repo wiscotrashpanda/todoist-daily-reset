@@ -2,17 +2,30 @@ import json
 import os
 import logging
 from datetime import datetime, date, timezone
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Union
 
 from todoist_api_python.api import TodoistAPI
+from todoist_api_python.models import Task
 from dateutil import parser
 import pytz
+
+# AWS Lambda context type
+class LambdaContext:
+    """AWS Lambda context object type hint"""
+    function_name: str
+    function_version: str
+    invoked_function_arn: str
+    memory_limit_in_mb: int
+    remaining_time_in_millis: int
+    log_group_name: str
+    log_stream_name: str
+    aws_request_id: str
 
 # Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
+def lambda_handler(event: Dict[str, Any], context: Optional[LambdaContext]) -> Dict[str, Any]:
     """
     AWS Lambda handler function to complete recurring Todoist tasks due today.
     
@@ -41,14 +54,31 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         logger.info(f"Processing tasks for date: {today} (timezone: {timezone_str})")
 
         # Get all active tasks
-        pages = api.get_tasks()
+        try:
+            tasks = api.get_tasks()
+            # Ensure we have a list of tasks
+            if not isinstance(tasks, list):
+                tasks = list(tasks)
+        except Exception as e:
+            logger.error(f"Failed to retrieve tasks: {str(e)}")
+            raise
+        
+        logger.info(f"Retrieved {len(tasks)} total tasks")
         
         # Filter for recurring tasks due today
         tasks_to_complete = []
-        for page in pages:
-            for task in page:  
-              if is_recurring_task_due_today(task, today, user_timezone):
-                  tasks_to_complete.append(task)
+        for i, task in enumerate(tasks):
+            # Debug: log task type for first few tasks
+            if i < 3:
+                logger.debug(f"Task {i} type: {type(task)}, has due: {hasattr(task, 'due')}")
+            
+            # Skip if this is somehow a list (shouldn't happen with correct API)
+            if isinstance(task, list):
+                logger.warning(f"Unexpected list found at index {i}, skipping")
+                continue
+                
+            if is_recurring_task_due_today(task, today, user_timezone):
+                tasks_to_complete.append(task)
        
         logger.info(f"Found {len(tasks_to_complete)} recurring tasks due today")
         
@@ -56,13 +86,17 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         completed_tasks = []
         for task in tasks_to_complete:
             try:
-                api.complete_task(task.id)
-                completed_tasks.append({
-                    'id': task.id,
-                    'content': task.content,
-                    'due_date': task.due.date if task.due else None
-                })
-                logger.info(f"Completed task: {task.content} (ID: {task.id})")
+                # Use the correct method to complete a task
+                success = api.complete_task(task_id=task.id)
+                if success:
+                    completed_tasks.append({
+                        'id': task.id,
+                        'content': task.content,
+                        'due_date': task.due.date if task.due else None
+                    })
+                    logger.info(f"Completed task: {task.content} (ID: {task.id})")
+                else:
+                    logger.warning(f"Failed to complete task: {task.content} (ID: {task.id})")
             except Exception as e:
                 logger.error(f"Failed to complete task {task.id}: {str(e)}")
         
@@ -72,7 +106,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'body': json.dumps({
                 'message': f'Successfully processed {len(completed_tasks)} recurring tasks',
                 'completed_tasks': completed_tasks,
-                # 'total_tasks_checked': len(tasks),
+                'total_tasks_checked': len(tasks),
                 'date_processed': today.isoformat(),
                 'timezone': timezone_str
             }, default=str)
@@ -92,7 +126,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
 
-def is_recurring_task_due_today(task: Any, today: date, user_timezone: pytz.BaseTzInfo) -> bool:
+def is_recurring_task_due_today(task: Union[Task, Any], today: date, user_timezone: pytz.BaseTzInfo) -> bool:
     """
     Check if a task is recurring and due today.
     
@@ -117,18 +151,21 @@ def is_recurring_task_due_today(task: Any, today: date, user_timezone: pytz.Base
         if task.due.date:
             # Date-only due date
             due_date = parser.parse(str(task.due.date)).date()
-        elif task.due.datetime:
-            # DateTime due date - convert to user's timezone
-            due_datetime = parser.parse(str(task.due.datetime))
-            if due_datetime.tzinfo is None:
-                # Assume it's in user's timezone if no timezone info
-                due_datetime = user_timezone.localize(due_datetime)
-            else:
-                # Convert to user's timezone
-                due_datetime = due_datetime.astimezone(user_timezone)
-            due_date = due_datetime.date()
         else:
-            return False
+            # Try to get datetime from the due object
+            due_datetime_str = getattr(task.due, 'datetime', None)
+            if due_datetime_str:
+                # DateTime due date - convert to user's timezone
+                due_datetime = parser.parse(str(due_datetime_str))
+                if due_datetime.tzinfo is None:
+                    # Assume it's in user's timezone if no timezone info
+                    due_datetime = user_timezone.localize(due_datetime)
+                else:
+                    # Convert to user's timezone
+                    due_datetime = due_datetime.astimezone(user_timezone)
+                due_date = due_datetime.date()
+            else:
+                return False
         
         # Check if due date is today
         return due_date == today
@@ -138,7 +175,7 @@ def is_recurring_task_due_today(task: Any, today: date, user_timezone: pytz.Base
         return False
 
 
-def get_task_summary(task: Any) -> Dict[str, Any]:
+def get_task_summary(task: Union[Task, Any]) -> Dict[str, Any]:
     """
     Get a summary of task information for logging.
     
@@ -152,7 +189,7 @@ def get_task_summary(task: Any) -> Dict[str, Any]:
         'id': task.id,
         'content': task.content,
         'due_date': task.due.date if task.due and task.due.date else None,
-        'due_datetime': task.due.datetime if task.due and task.due.datetime else None,
+        'due_datetime': getattr(task.due, 'datetime', None) if task.due else None,
         'is_recurring': task.due.is_recurring if task.due else False,
         'project_id': task.project_id,
         'labels': task.labels

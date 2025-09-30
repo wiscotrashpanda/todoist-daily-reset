@@ -54,6 +54,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - run: |
+        echo ${{ vars.AWS_OIDC_PROVISIONER_ROLE_ARN }}
+
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
