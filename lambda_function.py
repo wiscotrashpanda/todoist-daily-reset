@@ -1,7 +1,7 @@
 import json
 import os
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, date, timezone
 from typing import List, Dict, Any
 
 from todoist_api_python.api import TodoistAPI
@@ -28,7 +28,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         todoist_token = os.environ.get('TODOIST_API_TOKEN')
         if not todoist_token:
             raise ValueError("TODOIST_API_TOKEN environment variable is required")
-        
+
         # Get timezone from environment variable, default to UTC
         timezone_str = os.environ.get('TIMEZONE', 'UTC')
         user_timezone = pytz.timezone(timezone_str)
@@ -39,24 +39,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         # Get today's date in user's timezone
         today = datetime.now(user_timezone).date()
         logger.info(f"Processing tasks for date: {today} (timezone: {timezone_str})")
-        
+
         # Get all active tasks
-        tasks = api.get_tasks()
-        logger.info(f"Retrieved {len(tasks)} total tasks")
+        pages = api.get_tasks()
         
         # Filter for recurring tasks due today
         tasks_to_complete = []
-        for task in tasks:
-            if is_recurring_task_due_today(task, today, user_timezone):
-                tasks_to_complete.append(task)
-        
+        for page in pages:
+            for task in page:  
+              if is_recurring_task_due_today(task, today, user_timezone):
+                  tasks_to_complete.append(task)
+       
         logger.info(f"Found {len(tasks_to_complete)} recurring tasks due today")
         
         # Complete the tasks
         completed_tasks = []
         for task in tasks_to_complete:
             try:
-                api.close_task(task.id)
+                api.complete_task(task.id)
                 completed_tasks.append({
                     'id': task.id,
                     'content': task.content,
@@ -72,7 +72,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             'body': json.dumps({
                 'message': f'Successfully processed {len(completed_tasks)} recurring tasks',
                 'completed_tasks': completed_tasks,
-                'total_tasks_checked': len(tasks),
+                # 'total_tasks_checked': len(tasks),
                 'date_processed': today.isoformat(),
                 'timezone': timezone_str
             }, default=str)
@@ -92,7 +92,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         }
 
 
-def is_recurring_task_due_today(task: Any, today: datetime.date, user_timezone: pytz.timezone) -> bool:
+def is_recurring_task_due_today(task: Any, today: date, user_timezone: pytz.BaseTzInfo) -> bool:
     """
     Check if a task is recurring and due today.
     
@@ -115,11 +115,16 @@ def is_recurring_task_due_today(task: Any, today: datetime.date, user_timezone: 
     # Parse the due date
     try:
         if task.due.date:
+            print("task.due.date", task.due.date)
             # Date-only due date
-            due_date = parser.parse(task.due.date).date()
+            due_date = parser.parse(str(task.due.date)).date()
+            print(due_date)
         elif task.due.datetime:
             # DateTime due date - convert to user's timezone
-            due_datetime = parser.parse(task.due.datetime)
+            print("task.due.datetime", task.due.datetime)
+            due_datetime = parser.parse(str(task.due.datetime))
+            print(due_datetime)
+
             if due_datetime.tzinfo is None:
                 # Assume it's in user's timezone if no timezone info
                 due_datetime = user_timezone.localize(due_datetime)

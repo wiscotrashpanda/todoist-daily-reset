@@ -6,39 +6,41 @@ resource "aws_ecr_repository" "todoist_daily_reset" {
   image_scanning_configuration {
     scan_on_push = true
   }
+}
 
-  lifecycle_policy {
-    policy = jsonencode({
-      rules = [
-        {
-          rulePriority = 1
-          description  = "Keep last 5 images"
-          selection = {
-            tagStatus     = "tagged"
-            tagPrefixList = ["v"]
-            countType     = "imageCountMoreThan"
-            countNumber   = 5
-          }
-          action = {
-            type = "expire"
-          }
-        },
-        {
-          rulePriority = 2
-          description  = "Delete untagged images"
-          selection = {
-            tagStatus   = "untagged"
-            countType   = "sinceImagePushed"
-            countUnit   = "days"
-            countNumber = 1
-          }
-          action = {
-            type = "expire"
-          }
+# ECR Repository Lifecycle policy
+resource "aws_ecr_lifecycle_policy" "todoist_lifecycle_policy" {
+  repository = aws_ecr_repository.todoist_daily_reset.name
+
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Expire untagged images older than 30 days"
+        selection = {
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 30
         }
-      ]
-    })
-  }
+        action = {
+          type = "expire"
+        }
+      },
+      {
+        rulePriority = 2
+        description  = "Keep only the last 10 tagged images"
+        selection = {
+          tagStatus   = "tagged"
+          countType   = "imageCountMoreThan"
+          countNumber = 10
+        }
+        action = {
+          type = "expire"
+        }
+      }
+    ]
+  })
 }
 
 # IAM role for Lambda function
