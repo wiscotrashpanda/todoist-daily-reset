@@ -1,0 +1,62 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO_NAME: todoist-daily-rollover
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # Step 1: Provision ECR Repo (Targeted Apply)
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init
+
+      - name: Create ECR Repo
+        working-directory: ./terraform
+        run: terraform apply -target=aws_ecr_repository.todoist_repo -auto-approve
+
+      # Step 2: Build & Push Docker Image
+      - name: Build, tag, and push image to Amazon ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPO_NAME:latest ./src
+          docker push $ECR_REGISTRY/$ECR_REPO_NAME:latest
+
+      # Step 3: Deploy Full Infrastructure (Lambda + Scheduler)
+      - name: Terraform Apply (Full)
+        working-directory: ./terraform
+        run: terraform apply -auto-approve
+        env:
+          # We pass a dummy value here because the real token 
+          # should be managed manually or via secrets manager in production.
+          # If you want to automate it, add TODOIST_API_TOKEN to GitHub Secrets
+          # and map it here: TF_VAR_todoist_api_token: ${{ secrets.TODOIST_API_TOKEN }}
+          TF_VAR_todoist_api_token: "placeholder_update_in_console"
